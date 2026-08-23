@@ -1,7 +1,8 @@
+import os
 from functools import lru_cache
 from typing import Self
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _FORBIDDEN_SECRETS = frozenset(
@@ -42,13 +43,35 @@ class Settings(BaseSettings):
     cookie_samesite: str = "lax"
     cookie_secure: bool | None = None
 
+    @field_validator("database_url")
+    @classmethod
+    def normalize_database_url(cls, value: str) -> str:
+        value = value.strip().strip('"').strip("'")
+        if value.startswith("postgres://"):
+            value = "postgresql://" + value[len("postgres://") :]
+        if value.startswith("postgresql://") and "+asyncpg" not in value.split("://", 1)[0]:
+            value = "postgresql+asyncpg://" + value[len("postgresql://") :]
+        return value
+
+    @field_validator("redis_url")
+    @classmethod
+    def normalize_redis_url(cls, value: str) -> str:
+        value = value.strip().strip('"').strip("'")
+        if value.startswith("redis://") and "upstash.io" in value:
+            value = "rediss://" + value[len("redis://") :]
+        return value
+
     @property
     def is_production(self) -> bool:
         return self.environment.lower() == "production"
 
     @property
     def cors_origin_list(self) -> list[str]:
-        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+        origins = [o.strip().rstrip("/") for o in self.cors_origins.split(",") if o.strip()]
+        render_url = os.environ.get("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
+        if render_url and render_url not in origins:
+            origins.append(render_url)
+        return origins
 
     @property
     def cookie_secure_flag(self) -> bool:
@@ -80,7 +103,10 @@ class Settings(BaseSettings):
             raise ValueError("CRON_SECRET must be set (>=16 chars) in production")
 
         if not self.cors_origin_list:
-            raise ValueError("CORS_ORIGINS must list at least one trusted origin in production")
+            raise ValueError(
+                "CORS_ORIGINS must list at least one trusted origin in production "
+                "(or rely on RENDER_EXTERNAL_URL, which Render sets automatically)"
+            )
 
         return self
 

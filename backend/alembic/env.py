@@ -21,7 +21,9 @@ def _sync_database_url() -> str:
     """Alembic needs a synchronous driver URL."""
     url = os.environ.get("DATABASE_URL") or get_settings().database_url
     if url.startswith("postgresql+asyncpg://"):
-        return url.replace("postgresql+asyncpg://", "postgresql://", 1)
+        return url.replace("postgresql+asyncpg://", "postgresql+psycopg://", 1)
+    if url.startswith("postgresql://") and "+" not in url.split("://", 1)[0]:
+        return url.replace("postgresql://", "postgresql+psycopg://", 1)
     if url.startswith("sqlite+aiosqlite://"):
         return url.replace("sqlite+aiosqlite://", "sqlite://", 1)
     return url

@@ -39,7 +39,7 @@ COPY backend/ .
 COPY --from=frontend-build /frontend/dist ./static
 
 COPY scripts/start-production.sh /start-production.sh
-RUN chmod +x /start-production.sh
+RUN sed -i 's/\r$//' /start-production.sh && chmod +x /start-production.sh
 
 EXPOSE 8000
 
