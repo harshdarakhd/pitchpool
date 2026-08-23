@@ -31,7 +31,16 @@ _LAUNCH_ARGS = [
     "--disable-blink-features=AutomationControlled",
     "--no-sandbox",
     "--disable-dev-shm-usage",
+    # Free hosting tiers cap the container near 512 MB; these keep Chromium
+    # inside that budget on a long tournament page.
+    "--disable-gpu",
+    "--disable-extensions",
+    "--disable-background-networking",
+    "--disable-features=site-per-process",
+    "--js-flags=--max-old-space-size=192",
 ]
+
+_BLOCKED_RESOURCE_TYPES = frozenset({"image", "media", "font"})
 
 _BLOCKED_MARKERS = ("you have been blocked", "attention required", "cf-error-details")
 
@@ -83,6 +92,14 @@ async def fetch_tournament_html(
             timezone_id="Asia/Kolkata",
         )
         await context.add_init_script(_STEALTH_JS)
+        await context.route(
+            "**/*",
+            lambda route: (
+                route.abort()
+                if route.request.resource_type in _BLOCKED_RESOURCE_TYPES
+                else route.continue_()
+            ),
+        )
         page = await context.new_page()
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=90000)

@@ -17,6 +17,7 @@ from app.services.cricheroes.sync import sync_cricheroes
 from app.services.tournaments import (
     SYNC_LOCK_KEY,
     SYNC_LOCK_TTL_SECONDS,
+    ensure_active_tournament,
     get_active_tournament,
 )
 
@@ -69,10 +70,10 @@ async def stale_startup_sync() -> None:
     await asyncio.sleep(2)
 
     async with AsyncSessionLocal() as db:
-        active = await get_active_tournament(db)
-        if not active:
-            logger.info("Startup sync skipped — no active tournament")
-            return
+        # A freshly migrated production database has no tournament yet, so seed
+        # one from the environment instead of skipping every automatic sync.
+        active = await ensure_active_tournament(db)
+        await db.commit()
 
         stale = True
         if active.last_sync_at:

@@ -30,8 +30,9 @@ async def bootstrap_admin() -> int:
         print("BOOTSTRAP_ADMIN_PASSWORD must be at least 8 characters", file=sys.stderr)
         return 1
 
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    if not settings.is_production:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
 
     async with AsyncSessionLocal() as db:
         existing = await db.execute(select(User).where(User.email == email))
