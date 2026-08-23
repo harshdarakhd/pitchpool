@@ -79,6 +79,10 @@ async def sync_cricheroes(
 
         parsed = parse_matches_from_pages(pages)
         run.matches_seen = len(parsed)
+        if not parsed:
+            raise RuntimeError(
+                "CricHeroes scrape returned no matches (bot check, empty DOM, or parser miss)"
+            )
         updated = 0
 
         settings = get_settings()

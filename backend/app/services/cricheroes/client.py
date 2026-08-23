@@ -9,6 +9,7 @@ normal page render, so change them only alongside a re-test.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 
 logger = logging.getLogger(__name__)
@@ -31,18 +32,19 @@ _LAUNCH_ARGS = [
     "--disable-blink-features=AutomationControlled",
     "--no-sandbox",
     "--disable-dev-shm-usage",
-    # Free hosting tiers cap the container near 512 MB; these keep Chromium
-    # inside that budget on a long tournament page.
     "--disable-gpu",
     "--disable-extensions",
-    "--disable-background-networking",
-    "--disable-features=site-per-process",
-    "--js-flags=--max-old-space-size=192",
 ]
 
-_BLOCKED_RESOURCE_TYPES = frozenset({"image", "media", "font"})
-
-_BLOCKED_MARKERS = ("you have been blocked", "attention required", "cf-error-details")
+# Cloudflare challenge pages use different copy than a hard block.
+_BLOCKED_MARKERS = (
+    "you have been blocked",
+    "attention required",
+    "cf-error-details",
+    "just a moment",
+    "cf-browser-verification",
+    "challenge-platform",
+)
 
 
 def _looks_blocked(html: str) -> bool:
@@ -92,28 +94,51 @@ async def fetch_tournament_html(
             timezone_id="Asia/Kolkata",
         )
         await context.add_init_script(_STEALTH_JS)
-        await context.route(
-            "**/*",
-            lambda route: (
-                route.abort()
-                if route.request.resource_type in _BLOCKED_RESOURCE_TYPES
-                else route.continue_()
-            ),
-        )
         page = await context.new_page()
+        captured: list[object] = []
+
+        async def _capture_json(response) -> None:
+            try:
+                content_type = (response.headers.get("content-type") or "").lower()
+                if "json" not in content_type or response.status != 200:
+                    return
+                lowered = response.url.lower()
+                if not any(token in lowered for token in ("match", "tournament", "fixture", "score")):
+                    return
+                captured.append(await response.json())
+            except Exception:
+                return
+
+        page.on("response", _capture_json)
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=90000)
             try:
                 await page.wait_for_selector(
-                    "[class*='matchContainer'], [class*='matchCard']", timeout=30000
+                    "[class*='matchContainer'], [class*='matchCard']", timeout=45000
                 )
             except Exception:
-                logger.warning("No match cards appeared for %s", url)
+                title = ""
+                try:
+                    title = await page.title()
+                except Exception:
+                    pass
+                logger.warning("No match cards appeared for %s (title=%r)", url, title)
+                await page.wait_for_timeout(8000)
             if load_all:
                 await _click_load_more(page)
             html = await page.content()
-            if _looks_blocked(html):
+            blocked = _looks_blocked(html)
+            if blocked:
                 logger.error("CricHeroes returned a bot-protection page for %s", url)
+                html = ""
+            if captured:
+                # Keep XHR payloads even when the DOM is a challenge page.
+                html += (
+                    '<script id="pitchpool-captured-api" type="application/json">'
+                    f"{json.dumps(captured, default=str)}"
+                    "</script>"
+                )
+            elif blocked:
                 html = ""
         except Exception:
             logger.exception("Failed to fetch CricHeroes page %s", url)

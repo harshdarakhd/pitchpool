@@ -244,6 +244,143 @@ def parse_tournament_name_from_html(html: str) -> str | None:
     return None
 
 
+def _team_name(value: Any) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, dict):
+        for key in ("name", "team_name", "teamName", "full_name", "fullName"):
+            raw = value.get(key)
+            if isinstance(raw, str) and raw.strip():
+                return raw.strip()
+    return ""
+
+
+def _coerce_datetime(value: Any) -> datetime | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
+    if isinstance(value, (int, float)):
+        ts = float(value)
+        if ts > 10_000_000_000:
+            ts /= 1000.0
+        if ts <= 0:
+            return None
+        return datetime.fromtimestamp(ts, tz=UTC)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        if text.isdigit():
+            return _coerce_datetime(int(text))
+        try:
+            return datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    return None
+
+
+def _looks_like_api_match(item: dict[str, Any]) -> bool:
+    keys = {str(k).lower() for k in item}
+    has_id = bool(keys & {"id", "match_id", "matchid", "match_key"})
+    has_teams = any("team" in k for k in keys)
+    return has_id and has_teams
+
+
+def _walk_api_matches(payload: Any, found: list[dict[str, Any]]) -> None:
+    if isinstance(payload, list):
+        if payload and isinstance(payload[0], dict) and _looks_like_api_match(payload[0]):
+            found.extend(item for item in payload if isinstance(item, dict))
+            return
+        for item in payload:
+            _walk_api_matches(item, found)
+        return
+    if isinstance(payload, dict):
+        for value in payload.values():
+            _walk_api_matches(value, found)
+
+
+def _status_from_api(item: dict[str, Any], winner: str | None) -> str:
+    raw = item.get("status") or item.get("match_status") or item.get("matchStatus") or ""
+    text = str(raw).lower()
+    if any(token in text for token in ("abandon", "no result", "cancel", "wash")):
+        return "no_result"
+    if any(token in text for token in ("complete", "past", "result")) or winner:
+        return "completed"
+    if any(token in text for token in ("live", "progress")):
+        return "locked"
+    numeric = item.get("status_id") or item.get("match_status_id")
+    if numeric == 2:
+        return "completed"
+    if numeric == 1:
+        return "locked"
+    return "upcoming"
+
+
+def parse_matches_from_api_payloads(payloads: list[Any]) -> list[dict[str, Any]]:
+    """Normalize captured CricHeroes XHR JSON into the same dicts as HTML cards."""
+    raw_matches: list[dict[str, Any]] = []
+    for payload in payloads:
+        _walk_api_matches(payload, raw_matches)
+
+    matches: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in raw_matches:
+        match_id = item.get("id") or item.get("match_id") or item.get("matchId") or item.get("match_key")
+        team_a = (
+            _team_name(item.get("team_a"))
+            or _team_name(item.get("teamA"))
+            or _team_name(item.get("team_a_name"))
+            or _team_name(item.get("teamAName"))
+            or _team_name(item.get("team1"))
+        )
+        team_b = (
+            _team_name(item.get("team_b"))
+            or _team_name(item.get("teamB"))
+            or _team_name(item.get("team_b_name"))
+            or _team_name(item.get("teamBName"))
+            or _team_name(item.get("team2"))
+        )
+        if not match_id or not team_a or not team_b:
+            continue
+        key = str(match_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        winner = (
+            _team_name(item.get("winner"))
+            or _team_name(item.get("winner_team"))
+            or _team_name(item.get("winning_team"))
+            or None
+        ) or None
+        start = (
+            _coerce_datetime(item.get("start_time"))
+            or _coerce_datetime(item.get("startTime"))
+            or _coerce_datetime(item.get("match_start_time"))
+            or _coerce_datetime(item.get("datetime"))
+            or _coerce_datetime(item.get("date"))
+        )
+        result_raw = item.get("result") or item.get("result_str") or item.get("resultString")
+        matches.append(
+            {
+                "cricheroes_match_key": key,
+                "team_a_name": team_a,
+                "team_b_name": team_b,
+                "winner_name": winner,
+                "status": _status_from_api(item, winner),
+                "venue": item.get("venue") or item.get("ground") or item.get("location"),
+                "start_time": start,
+                "result_raw": str(result_raw) if result_raw else None,
+                "stage": "league",
+                "stage_label": item.get("round") or item.get("round_name") or item.get("stage"),
+                "overs": None,
+                "scorecard_url": item.get("scorecard_url") or item.get("url"),
+            }
+        )
+    logger.info("Parsed %d CricHeroes matches from captured API JSON", len(matches))
+    return matches
+
+
 def parse_matches_from_html(html: str) -> list[dict[str, Any]]:
     """Extract match data from a rendered CricHeroes tournament matches page."""
     if not html:
@@ -270,6 +407,20 @@ def parse_matches_from_html(html: str) -> list[dict[str, Any]]:
             continue
         seen.add(key)
         matches.append(parsed)
+
+    captured = soup.find("script", id="pitchpool-captured-api")
+    if captured and captured.string:
+        try:
+            payloads = json.loads(captured.string)
+        except json.JSONDecodeError:
+            payloads = []
+        if isinstance(payloads, list):
+            for item in parse_matches_from_api_payloads(payloads):
+                key = item["cricheroes_match_key"]
+                if key in seen:
+                    continue
+                seen.add(key)
+                matches.append(item)
 
     logger.info("Parsed %d CricHeroes matches from %d cards", len(matches), len(cards))
     return matches

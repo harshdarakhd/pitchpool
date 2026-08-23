@@ -5,6 +5,8 @@ The class names below copy the real hashed CSS-module format
 ever starts depending on the volatile hash segment.
 """
 
+import json
+
 from app.services.cricheroes.parser import (
     parse_matches_from_html,
     parse_matches_from_pages,
@@ -175,3 +177,35 @@ def test_pages_are_merged_and_deduplicated():
 def test_empty_html_is_safe():
     assert parse_matches_from_html("") == []
     assert parse_teams_from_html("") == []
+
+
+def test_captured_api_json_is_parsed_when_dom_has_no_cards():
+    payload = [
+        {
+            "data": {
+                "matches": [
+                    {
+                        "id": 26120123,
+                        "team_a": {"name": "Rajwada Royals"},
+                        "team_b": {"name": "Eagles Warriors"},
+                        "winner": {"name": "Rajwada Royals"},
+                        "status": "completed",
+                        "start_time": "2026-07-13T08:00:00+00:00",
+                        "venue": "Pune",
+                    }
+                ]
+            }
+        }
+    ]
+    html = (
+        '<html><body><script id="pitchpool-captured-api" type="application/json">'
+        + json.dumps(payload)
+        + "</script></body></html>"
+    )
+    (m,) = parse_matches_from_html(html)
+    assert m["cricheroes_match_key"] == "26120123"
+    assert m["team_a_name"] == "Rajwada Royals"
+    assert m["team_b_name"] == "Eagles Warriors"
+    assert m["winner_name"] == "Rajwada Royals"
+    assert m["status"] == "completed"
+    assert m["venue"] == "Pune"

@@ -76,7 +76,7 @@ async def stale_startup_sync() -> None:
         await db.commit()
 
         stale = True
-        if active.last_sync_at:
+        if active.last_sync_at and (active.match_count or 0) > 0:
             age = datetime.now(UTC) - active.last_sync_at
             stale = age > timedelta(minutes=settings.sync_stale_minutes)
 
