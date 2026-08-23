@@ -16,9 +16,9 @@ def _rebuild_db_engine() -> None:
     import app.db.base as db_base
 
     settings = get_settings()
-    connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
+    url, connect_args = settings.async_engine_url_and_args()
     db_base.engine = create_async_engine(
-        settings.database_url,
+        url,
         echo=settings.sql_echo,
         connect_args=connect_args,
     )

@@ -49,3 +49,12 @@ class TestProductionConfigValidation:
         s = Settings()
         assert s.database_url.startswith("sqlite")
         assert s.uses_memory_redis
+
+    def test_asyncpg_drops_sslmode_query(self):
+        s = self._prod_settings(
+            database_url="postgresql+asyncpg://u:p@host/db?sslmode=require&channel_binding=require"
+        )
+        url, args = s.async_engine_url_and_args()
+        assert "sslmode" not in url
+        assert "channel_binding" not in url
+        assert args.get("ssl") is True

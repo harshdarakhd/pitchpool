@@ -53,6 +53,24 @@ class Settings(BaseSettings):
             value = "postgresql+asyncpg://" + value[len("postgresql://") :]
         return value
 
+    def async_engine_url_and_args(self) -> tuple[str, dict]:
+        """asyncpg rejects libpq query args such as sslmode=require."""
+        url = self.database_url
+        connect_args: dict = {}
+        if url.startswith("sqlite"):
+            connect_args["check_same_thread"] = False
+            return url, connect_args
+
+        from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+
+        parsed = urlparse(url)
+        query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+        query.pop("sslmode", None)
+        query.pop("channel_binding", None)
+        cleaned = urlunparse(parsed._replace(query=urlencode(query)))
+        connect_args["ssl"] = True
+        return cleaned, connect_args
+
     @field_validator("redis_url")
     @classmethod
     def normalize_redis_url(cls, value: str) -> str:
@@ -68,9 +86,14 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         origins = [o.strip().rstrip("/") for o in self.cors_origins.split(",") if o.strip()]
-        render_url = os.environ.get("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
-        if render_url and render_url not in origins:
-            origins.append(render_url)
+        for key in ("RENDER_EXTERNAL_URL", "RENDER_EXTERNAL_HOSTNAME"):
+            raw = os.environ.get(key, "").strip().rstrip("/")
+            if not raw:
+                continue
+            if key == "RENDER_EXTERNAL_HOSTNAME" and not raw.startswith("http"):
+                raw = f"https://{raw}"
+            if raw not in origins:
+                origins.append(raw)
         return origins
 
     @property
