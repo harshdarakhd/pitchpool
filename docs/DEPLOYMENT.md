@@ -77,8 +77,8 @@ Set these in the Render dashboard (**Environment** tab). Mark secrets as **Secre
 | `SECRET_KEY` | yes | `openssl rand -hex 32` — JWT signing; rotate invalidates sessions |
 | `CRON_SECRET` | yes | `openssl rand -hex 32` — protects internal cron/sync routes |
 | `CORS_ORIGINS` | yes | `https://pitchpool-xxxx.onrender.com` (your Render URL; comma-separate if custom domain added) |
-| `CRICHEROES_TOURNAMENT_ID` | bootstrap | e.g. `1691351` — used only until admin DB tournament is active |
-| `CRICHEROES_BASE_URL` | bootstrap | Full CricHeroes tournament URL for first sync |
+| `CRICHEROES_TOURNAMENT_ID` | bootstrap | e.g. `2078243` — seeds the first tournament row on an empty database |
+| `CRICHEROES_BASE_URL` | bootstrap | Full CricHeroes tournament URL for first sync, e.g. `https://cricheroes.com/tournament/2078243/big-bash-league-season-5` |
 | `BOOTSTRAP_ADMIN_EMAIL` | first deploy | One-time admin account email |
 | `BOOTSTRAP_ADMIN_PASSWORD` | first deploy | Strong password; remove after bootstrap |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | optional | default `15` |
@@ -93,19 +93,17 @@ The Docker build sets `VITE_API_URL=` (empty). The SPA calls `/api/v1/…` on th
 
 ## 4. Bootstrap first admin
 
-After the first successful deploy (migrations applied):
+Render Free has no shell, so the container does this for you on every boot:
 
-1. Ensure `BOOTSTRAP_ADMIN_EMAIL` and `BOOTSTRAP_ADMIN_PASSWORD` are set.
-2. Run the bootstrap script once (Render **Shell** or one-off job):
-
-   ```bash
-   python scripts/bootstrap_admin.py
-   ```
-
+1. Set `BOOTSTRAP_ADMIN_EMAIL` and `BOOTSTRAP_ADMIN_PASSWORD` in Render env.
+2. Redeploy. `scripts/start-production.sh` runs `scripts/bootstrap_admin.py` after
+   migrations. It creates the admin, or promotes an already-registered account with
+   that email to admin (the existing password is kept in that case).
 3. Remove or rotate `BOOTSTRAP_ADMIN_PASSWORD` from Render env after bootstrap.
 4. Log in at `https://<your-service>/login`, open **Admin**, preview/activate the live tournament.
 
-Alternatively, register a normal user and promote via DB if bootstrap script is not yet available.
+If you have shell access on a paid plan, `python scripts/bootstrap_admin.py` can also
+be run manually; it is idempotent.
 
 ## 5. Optional cron wake-up and sync
 
