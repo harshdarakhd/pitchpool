@@ -1,0 +1,91 @@
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/space-grotesk/500.css";
+@import "@fontsource/space-grotesk/600.css";
+@import "@fontsource/space-grotesk/700.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-display: "Space Grotesk", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", monospace;
+  --color-surface: #F7F8FA;
+  --color-ink: #12141A;
+  --color-muted: #5C6470;
+  --color-primary: #0E7C86;
+  --color-primary-dark: #0A5F67;
+  --color-positive: #1E9E6A;
+  --color-negative: #D1435B;
+  --color-accent: #E0A500;
+  --color-card: #FFFFFF;
+  --color-border: #E2E6EC;
+}
+
+body {
+  @apply bg-surface text-ink font-sans antialiased min-h-screen;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.safe-area-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.safe-area-x {
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
+.touch-target {
+  touch-action: manipulation;
+  min-height: 44px;
+  min-width: 44px;
+}
+
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+.dark body,
+body.dark {
+  @apply bg-[#0F1218] text-[#E8EAED];
+}
+
+.dark .card {
+  @apply bg-[#1A1F28] border-[#2A3140];
+}
+
+.card {
+  @apply bg-card border border-border rounded-2xl shadow-sm;
+}
+
+.btn-primary {
+  @apply bg-primary hover:bg-primary-dark text-white font-medium px-5 py-2.5 rounded-xl transition-colors;
+}
+
+.btn-ghost {
+  @apply text-muted hover:text-ink hover:bg-black/5 px-3 py-2 rounded-lg transition-colors;
+}
+
+.input {
+  @apply w-full border border-border rounded-xl px-4 py-2.5 bg-white focus:outline-none focus:ring-2 focus:ring-primary/30;
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+.font-mono-num {
+  font-family: var(--font-mono);
+}

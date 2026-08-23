@@ -1,0 +1,37 @@
+# Render Blueprint — PitchPool same-origin public pilot (Free tier)
+# https://render.com/docs/blueprint-spec
+#
+# Prerequisites: Neon PostgreSQL + Upstash Redis connection strings.
+# After first deploy, set CORS_ORIGINS to your Render URL (see docs/DEPLOYMENT.md).
+
+services:
+  - type: web
+    name: pitchpool
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: CRON_SECRET
+        generateValue: true
+      - key: CORS_ORIGINS
+        sync: false
+      - key: CRICHEROES_TOURNAMENT_ID
+        sync: false
+      - key: CRICHEROES_BASE_URL
+        sync: false
+      - key: BOOTSTRAP_ADMIN_EMAIL
+        sync: false
+      - key: BOOTSTRAP_ADMIN_PASSWORD
+        sync: false

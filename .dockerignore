@@ -1,0 +1,38 @@
+# Version control
+.git
+.gitignore
+
+# Cursor / IDE
+.cursor
+.vscode
+*.swp
+*.swo
+
+# Frontend (dev artifacts; dist is rebuilt in the image)
+frontend/node_modules
+frontend/dist
+frontend/.vite
+
+# Backend (dev artifacts and secrets)
+backend/.env
+backend/.env.*
+!backend/.env.example
+backend/.pytest_cache
+backend/__pycache__
+backend/**/__pycache__
+backend/*.db
+backend/.venv
+backend/htmlcov
+backend/.coverage
+
+# Local compose overrides
+docker-compose.override.yml
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Docs and plans are not needed at runtime
+*.md
+!docs/DEPLOYMENT.md
+.cursor/plans
