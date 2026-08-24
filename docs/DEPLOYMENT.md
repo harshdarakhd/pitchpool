@@ -81,6 +81,7 @@ Set these in the Render dashboard (**Environment** tab). Mark secrets as **Secre
 | `CRICHEROES_BASE_URL` | bootstrap | Full CricHeroes tournament URL for first sync, e.g. `https://cricheroes.com/tournament/2078243/big-bash-league-season-5` |
 | `BOOTSTRAP_ADMIN_EMAIL` | first deploy | One-time admin account email |
 | `BOOTSTRAP_ADMIN_PASSWORD` | first deploy | Strong password; remove after bootstrap |
+| `ENABLE_AUTO_SCRAPE` | recommended | `false` on cloud hosts — CricHeroes blocks their IPs; import via `scripts/push_sync.py` |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | optional | default `15` |
 | `REFRESH_TOKEN_EXPIRE_DAYS` | optional | default `7` |
 | `SQL_ECHO` | optional | `false` in production |
@@ -105,32 +106,51 @@ Render Free has no shell, so the container does this for you on every boot:
 If you have shell access on a paid plan, `python scripts/bootstrap_admin.py` can also
 be run manually; it is idempotent.
 
-## 5. Optional cron wake-up and sync
+## 5. Keep-alive and match import
 
-Render Free has **no background worker**. While the web service is awake, APScheduler runs in-process. When it sleeps, scheduled sync stops until the next wake.
+Render Free has **no background worker** and stops the container after 15 minutes
+idle, so the next visitor sees Render's "waking up" screen. While the service is
+awake, APScheduler runs in-process.
 
-### Keep-alive (optional)
+### Keep-alive
 
-Use [cron-job.org](https://cron-job.org) (free) or similar:
+Either option is free; pick one.
 
-- **URL:** `GET https://<your-service>/health`
-- **Schedule:** every 14 minutes
-- **Purpose:** reduce cold starts; does not guarantee 100% uptime
+- **cron-job.org** (more punctual): `GET https://<your-service>/health` every 10 minutes.
+- **GitHub Actions**: `.github/workflows/keepalive.yml` already does this. GitHub's
+  scheduler often runs several minutes late, so the container can still nap
+  occasionally. Override the URL with a repo variable named `PITCHPOOL_URL`.
 
-### Protected sync endpoint (placeholder)
+One always-warm service uses ~730 of the 750 free instance-hours per month.
 
-When implemented by the backend:
+### Importing matches (CricHeroes blocks cloud IPs)
+
+CricHeroes answers datacenter IPs with a Cloudflare `Just a moment...` challenge,
+so the hosted app **cannot scrape itself**. Set `ENABLE_AUTO_SCRAPE=false` on
+Render to stop the pointless retries; deadline sweeps keep running.
+
+Push fixtures from a normal home connection instead:
+
+```bash
+set PITCHPOOL_URL=https://<your-service>
+set PITCHPOOL_CRON_SECRET=<CRON_SECRET from Render>
+python scripts/push_sync.py
+```
+
+The script scrapes locally, then POSTs to the protected endpoint:
 
 ```http
-POST /internal/cron/sync
+POST /internal/cron/import
 X-Cron-Secret: <CRON_SECRET>
 ```
 
-- Returns `200` when sync completes or is skipped (already running).
-- Returns `401` if `CRON_SECRET` header is missing or wrong.
-- Schedule every 10–15 minutes via cron-job.org **only while testing**; respect CricHeroes rate limits.
+- Returns `200` with a sync-run summary; the result appears in **Admin → sync runs**.
+- Returns `401` on a missing/wrong secret, `409` if the payload's tournament is not
+  the active one or a sync is already running.
+- Matches flagged `manual_override` in Admin are never overwritten by an import.
 
-Manual sync from the **Admin** page remains the reliable control if cron is not configured.
+Editing results by hand on the **Admin** page remains the fallback when a scrape
+is unavailable.
 
 ## 6. Post-deploy verification
 

@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     bootstrap_admin_password: str = ""
     sync_stale_minutes: int = 10
     enable_inprocess_scheduler: bool = True
+    # Hosts whose IPs CricHeroes blocks should import via scripts/push_sync.py
+    # instead of scraping; deadline sweeps keep running either way.
+    enable_auto_scrape: bool = True
     cookie_samesite: str = "lax"
     cookie_secure: bool | None = None
 

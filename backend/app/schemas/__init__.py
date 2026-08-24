@@ -188,6 +188,30 @@ class AdminMatchOverride(BaseModel):
     result_raw: str | None = None
 
 
+class ImportMatch(BaseModel):
+    cricheroes_match_key: str
+    team_a_name: str
+    team_b_name: str
+    start_time: datetime
+    status: str = "upcoming"
+    winner_name: str | None = None
+    venue: str | None = None
+    result_raw: str | None = None
+    stage: str = "league"
+    stage_label: str | None = None
+
+
+class ImportRequest(BaseModel):
+    """Fixtures scraped by a trusted client (see scripts/push_sync.py)."""
+
+    cricheroes_id: int | None = Field(
+        default=None,
+        description="Rejected unless it matches the active tournament",
+    )
+    teams: list[str] = Field(default_factory=list)
+    matches: list[ImportMatch]
+
+
 class TournamentPreviewRequest(BaseModel):
     ref: str = Field(description="CricHeroes tournament ID or canonical URL")
 

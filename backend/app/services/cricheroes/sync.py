@@ -56,138 +56,140 @@ async def _get_or_create_team(db: AsyncSession, tournament_id: int, name: str) -
     return team
 
 
-async def sync_cricheroes(
+async def _apply_matches(
     db: AsyncSession,
-    *,
-    tournament: Tournament | None = None,
-    pages: list[str] | None = None,
-) -> SyncRun:
-    tournament = tournament or await ensure_active_tournament(db)
-    base_url = tournament.base_url
+    tournament: Tournament,
+    run: SyncRun,
+    teams: list[str],
+    parsed: list[dict],
+) -> None:
+    """Upsert teams and matches, settling anything that just finished."""
+    for name in teams:
+        await _get_or_create_team(db, tournament.id, name)
 
+    run.matches_seen = len(parsed)
+    if not parsed:
+        raise RuntimeError(
+            "CricHeroes import contained no matches (bot check, empty DOM, or parser miss)"
+        )
+    updated = 0
+
+    settings = get_settings()
+    bid_deadline_minutes = settings.bid_deadline_minutes
+
+    status_map = {
+        "completed": MatchStatus.completed,
+        "upcoming": MatchStatus.upcoming,
+        "locked": MatchStatus.locked,
+        "no_result": MatchStatus.no_result,
+    }
+
+    for item in parsed:
+        if not item.get("start_time"):
+            logger.warning(
+                "Skipping CricHeroes match %s: no parsable date",
+                item.get("cricheroes_match_key"),
+            )
+            continue
+
+        team_a = await _get_or_create_team(db, tournament.id, item["team_a_name"])
+        team_b = await _get_or_create_team(db, tournament.id, item["team_b_name"])
+
+        result = await db.execute(
+            select(Match).where(
+                Match.tournament_id == tournament.id,
+                Match.cricheroes_match_key == item["cricheroes_match_key"],
+            )
+        )
+        match = result.scalar_one_or_none()
+
+        start_time = item["start_time"]
+        bid_deadline = start_time - timedelta(minutes=bid_deadline_minutes)
+        status = status_map.get(item["status"], MatchStatus.upcoming)
+
+        winner_id = None
+        if item.get("winner_name"):
+            name = item["winner_name"]
+            if name == team_a.name:
+                winner_id = team_a.id
+            elif name == team_b.name:
+                winner_id = team_b.id
+            else:
+                w_result = await db.execute(
+                    select(Team).where(Team.tournament_id == tournament.id, Team.name == name)
+                )
+                winner = w_result.scalar_one_or_none()
+                winner_id = winner.id if winner else None
+                if winner_id is None:
+                    logger.warning(
+                        "Winner %r not in match %s (%s vs %s)",
+                        name,
+                        item["cricheroes_match_key"],
+                        team_a.name,
+                        team_b.name,
+                    )
+
+        if match:
+            if match.manual_override:
+                continue
+            old_status = match.status
+            match.stage = MatchStage(item.get("stage", "league"))
+            match.stage_label = item.get("stage_label")
+            match.venue = item.get("venue")
+            match.start_time = start_time
+            match.bid_deadline = bid_deadline
+            match.status = status
+            match.result_raw = item.get("result_raw")
+            if winner_id:
+                match.winner_team_id = winner_id
+            if (
+                old_status != MatchStatus.completed
+                and status == MatchStatus.completed
+                and winner_id
+            ):
+                await settle_match(db, match)
+            updated += 1
+        else:
+            match = Match(
+                tournament_id=tournament.id,
+                cricheroes_match_key=item["cricheroes_match_key"],
+                stage=MatchStage(item.get("stage", "league")),
+                stage_label=item.get("stage_label"),
+                team_a_id=team_a.id,
+                team_b_id=team_b.id,
+                venue=item.get("venue"),
+                start_time=start_time,
+                bid_deadline=bid_deadline,
+                status=status,
+                winner_team_id=winner_id,
+                result_raw=item.get("result_raw"),
+            )
+            # Historical fixtures are imported already finished, so mark them
+            # settled instead of penalising users who never saw them.
+            if status in (MatchStatus.completed, MatchStatus.no_result):
+                match.settled_at = datetime.now(UTC)
+
+            db.add(match)
+            await db.flush()
+            db.add(MatchPool(match_id=match.id, team_id=team_a.id))
+            db.add(MatchPool(match_id=match.id, team_id=team_b.id))
+            updated += 1
+
+    run.matches_updated = updated
+    run.status = "success"
+    tournament.last_sync_at = datetime.now(UTC)
+    await update_tournament_counts(db, tournament.id)
+
+
+async def _record_run(db: AsyncSession, tournament: Tournament, produce) -> SyncRun:
+    """Wrap an import in a SyncRun row so failures stay visible in Admin."""
     run = SyncRun(status="running", tournament_id=tournament.id)
     db.add(run)
     await db.flush()
 
     try:
-        pages = pages or await fetch_all_match_tabs(base_url)
-        if not pages:
-            raise RuntimeError("CricHeroes returned no usable pages (blocked or offline)")
-
-        for name in parse_teams_from_html(pages[0]):
-            await _get_or_create_team(db, tournament.id, name)
-
-        parsed = parse_matches_from_pages(pages)
-        run.matches_seen = len(parsed)
-        if not parsed:
-            raise RuntimeError(
-                "CricHeroes scrape returned no matches (bot check, empty DOM, or parser miss)"
-            )
-        updated = 0
-
-        settings = get_settings()
-        bid_deadline_minutes = settings.bid_deadline_minutes
-
-        status_map = {
-            "completed": MatchStatus.completed,
-            "upcoming": MatchStatus.upcoming,
-            "locked": MatchStatus.locked,
-            "no_result": MatchStatus.no_result,
-        }
-
-        for item in parsed:
-            if not item.get("start_time"):
-                logger.warning(
-                    "Skipping CricHeroes match %s: no parsable date",
-                    item.get("cricheroes_match_key"),
-                )
-                continue
-
-            team_a = await _get_or_create_team(db, tournament.id, item["team_a_name"])
-            team_b = await _get_or_create_team(db, tournament.id, item["team_b_name"])
-
-            result = await db.execute(
-                select(Match).where(
-                    Match.tournament_id == tournament.id,
-                    Match.cricheroes_match_key == item["cricheroes_match_key"],
-                )
-            )
-            match = result.scalar_one_or_none()
-
-            start_time = item["start_time"]
-            bid_deadline = start_time - timedelta(minutes=bid_deadline_minutes)
-            status = status_map.get(item["status"], MatchStatus.upcoming)
-
-            winner_id = None
-            if item.get("winner_name"):
-                name = item["winner_name"]
-                if name == team_a.name:
-                    winner_id = team_a.id
-                elif name == team_b.name:
-                    winner_id = team_b.id
-                else:
-                    w_result = await db.execute(
-                        select(Team).where(Team.tournament_id == tournament.id, Team.name == name)
-                    )
-                    winner = w_result.scalar_one_or_none()
-                    winner_id = winner.id if winner else None
-                    if winner_id is None:
-                        logger.warning(
-                            "Winner %r not in match %s (%s vs %s)",
-                            name,
-                            item["cricheroes_match_key"],
-                            team_a.name,
-                            team_b.name,
-                        )
-
-            if match:
-                if match.manual_override:
-                    continue
-                old_status = match.status
-                match.stage = MatchStage(item.get("stage", "league"))
-                match.stage_label = item.get("stage_label")
-                match.venue = item.get("venue")
-                match.start_time = start_time
-                match.bid_deadline = bid_deadline
-                match.status = status
-                match.result_raw = item.get("result_raw")
-                if winner_id:
-                    match.winner_team_id = winner_id
-                if (
-                    old_status != MatchStatus.completed
-                    and status == MatchStatus.completed
-                    and winner_id
-                ):
-                    await settle_match(db, match)
-                updated += 1
-            else:
-                match = Match(
-                    tournament_id=tournament.id,
-                    cricheroes_match_key=item["cricheroes_match_key"],
-                    stage=MatchStage(item.get("stage", "league")),
-                    stage_label=item.get("stage_label"),
-                    team_a_id=team_a.id,
-                    team_b_id=team_b.id,
-                    venue=item.get("venue"),
-                    start_time=start_time,
-                    bid_deadline=bid_deadline,
-                    status=status,
-                    winner_team_id=winner_id,
-                    result_raw=item.get("result_raw"),
-                )
-                if status in (MatchStatus.completed, MatchStatus.no_result):
-                    match.settled_at = datetime.now(UTC)
-
-                db.add(match)
-                await db.flush()
-                db.add(MatchPool(match_id=match.id, team_id=team_a.id))
-                db.add(MatchPool(match_id=match.id, team_id=team_b.id))
-                updated += 1
-
-        run.matches_updated = updated
-        run.status = "success"
-        tournament.last_sync_at = datetime.now(UTC)
-        await update_tournament_counts(db, tournament.id)
+        teams, parsed = await produce()
+        await _apply_matches(db, tournament, run, teams, parsed)
     except Exception as e:
         logger.exception("Sync failed")
         run.status = "failed"
@@ -197,3 +199,40 @@ async def sync_cricheroes(
         await db.flush()
 
     return run
+
+
+async def sync_cricheroes(
+    db: AsyncSession,
+    *,
+    tournament: Tournament | None = None,
+    pages: list[str] | None = None,
+) -> SyncRun:
+    tournament = tournament or await ensure_active_tournament(db)
+
+    async def _produce() -> tuple[list[str], list[dict]]:
+        docs = pages or await fetch_all_match_tabs(tournament.base_url)
+        if not docs:
+            raise RuntimeError("CricHeroes returned no usable pages (blocked or offline)")
+        return parse_teams_from_html(docs[0]), parse_matches_from_pages(docs)
+
+    return await _record_run(db, tournament, _produce)
+
+
+async def import_matches(
+    db: AsyncSession,
+    *,
+    teams: list[str],
+    matches: list[dict],
+    tournament: Tournament | None = None,
+) -> SyncRun:
+    """Import fixtures scraped elsewhere (see scripts/push_sync.py).
+
+    CricHeroes serves a Cloudflare challenge to datacenter IPs, so the hosted
+    app cannot scrape itself; a trusted client pushes the parsed data instead.
+    """
+    tournament = tournament or await ensure_active_tournament(db)
+
+    async def _produce() -> tuple[list[str], list[dict]]:
+        return teams, matches
+
+    return await _record_run(db, tournament, _produce)

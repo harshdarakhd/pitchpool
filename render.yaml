@@ -17,6 +17,10 @@ services:
     envVars:
       - key: ENVIRONMENT
         value: production
+      # CricHeroes serves Cloudflare challenges to datacenter IPs; fixtures are
+      # pushed in by scripts/push_sync.py instead.
+      - key: ENABLE_AUTO_SCRAPE
+        value: "false"
       - key: DATABASE_URL
         sync: false
       - key: REDIS_URL

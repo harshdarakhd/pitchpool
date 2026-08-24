@@ -27,6 +27,9 @@ _scheduler: AsyncIOScheduler | None = None
 
 
 async def run_sync_job() -> None:
+    if not get_settings().enable_auto_scrape:
+        logger.debug("Sync skipped — auto scrape disabled")
+        return
     if not await acquire_lock(SYNC_LOCK_KEY, ttl=SYNC_LOCK_TTL_SECONDS):
         logger.debug("Sync skipped — lock held")
         return
@@ -69,6 +72,14 @@ async def stale_startup_sync() -> None:
     settings = get_settings()
     await asyncio.sleep(2)
 
+    if not settings.enable_auto_scrape:
+        # Still seed the tournament row so Admin and the import endpoint work.
+        async with AsyncSessionLocal() as db:
+            await ensure_active_tournament(db)
+            await db.commit()
+        logger.info("Startup sync skipped — auto scrape disabled")
+        return
+
     async with AsyncSessionLocal() as db:
         # A freshly migrated production database has no tournament yet, so seed
         # one from the environment instead of skipping every automatic sync.
@@ -98,7 +109,10 @@ def start_scheduler() -> AsyncIOScheduler | None:
         return _scheduler
 
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(run_sync_job, "interval", minutes=3, id="cricheroes_sync", replace_existing=True)
+    if settings.enable_auto_scrape:
+        scheduler.add_job(
+            run_sync_job, "interval", minutes=3, id="cricheroes_sync", replace_existing=True
+        )
     scheduler.add_job(run_deadline_sweep, "interval", minutes=1, id="deadline_sweep", replace_existing=True)
     scheduler.start()
     _scheduler = scheduler

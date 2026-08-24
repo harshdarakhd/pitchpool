@@ -181,6 +181,78 @@ class TestCronSync:
         app.dependency_overrides.clear()
 
 
+class TestCronImport:
+    @pytest.mark.asyncio
+    async def test_rejects_missing_secret(self, client: AsyncClient):
+        resp = await client.post("/internal/cron/import", json={"matches": []})
+        assert resp.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_imports_pushed_matches(self, client: AsyncClient, db_session):
+        from sqlalchemy import select
+
+        from app.db.base import get_db
+        from app.db.models import Match, MatchStatus
+        from app.main import app
+
+        async def _override():
+            yield db_session
+
+        app.dependency_overrides[get_db] = _override
+        try:
+            resp = await client.post(
+                "/internal/cron/import",
+                headers={"X-Cron-Secret": get_settings().cron_secret},
+                json={
+                    "teams": ["Rajwada Royals", "Eagles Warriors"],
+                    "matches": [
+                        {
+                            "cricheroes_match_key": "26120123",
+                            "team_a_name": "Rajwada Royals",
+                            "team_b_name": "Eagles Warriors",
+                            "start_time": "2026-07-13T08:00:00+00:00",
+                            "status": "completed",
+                            "winner_name": "Rajwada Royals",
+                            "venue": "Pune",
+                        }
+                    ],
+                },
+            )
+            assert resp.status_code == 200
+            body = resp.json()
+            assert body["status"] == "success"
+            assert body["matches_updated"] == 1
+
+            match = (
+                await db_session.execute(
+                    select(Match).where(Match.cricheroes_match_key == "26120123")
+                )
+            ).scalar_one()
+            assert match.status == MatchStatus.completed
+            assert match.winner_team_id is not None
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_rejects_mismatched_tournament(self, client: AsyncClient, db_session):
+        from app.db.base import get_db
+        from app.main import app
+
+        async def _override():
+            yield db_session
+
+        app.dependency_overrides[get_db] = _override
+        try:
+            resp = await client.post(
+                "/internal/cron/import",
+                headers={"X-Cron-Secret": get_settings().cron_secret},
+                json={"cricheroes_id": 999999, "teams": [], "matches": []},
+            )
+            assert resp.status_code == 409
+        finally:
+            app.dependency_overrides.clear()
+
+
 class TestReady:
     @pytest.mark.asyncio
     async def test_ready_ok(self, client: AsyncClient, db_session, monkeypatch):

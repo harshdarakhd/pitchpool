@@ -1,0 +1,28 @@
+name: Keep alive
+
+# Render Free stops the container after 15 minutes idle and cold-starts it on
+# the next visit. Pinging keeps the first visitor off the "waking up" screen.
+# GitHub's scheduler can run late, so cron-job.org is the reliable option
+# (see docs/DEPLOYMENT.md); this workflow is the zero-setup fallback.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping health endpoint
+        env:
+          TARGET: ${{ vars.PITCHPOOL_URL || 'https://pitchpool.onrender.com' }}
+        run: |
+          for attempt in 1 2 3; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 120 "$TARGET/health" || echo 000)
+            echo "attempt $attempt -> HTTP $code"
+            [ "$code" = "200" ] && exit 0
+            sleep 20
+          done
+          echo "Service did not respond with 200"
+          exit 1
