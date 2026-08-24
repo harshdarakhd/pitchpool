@@ -100,11 +100,18 @@ async def main() -> int:
 
     print(f"Pushing to {target}/internal/cron/import")
     async with httpx.AsyncClient(timeout=180) as client:
-        response = await client.post(
-            f"{target}/internal/cron/import",
-            json=payload,
-            headers={"X-Cron-Secret": secret},
-        )
+        # A crashed server-side scrape can leave the shared lock set until its
+        # 15-minute TTL expires; wait it out rather than scraping again.
+        for attempt in range(1, 20):
+            response = await client.post(
+                f"{target}/internal/cron/import",
+                json=payload,
+                headers={"X-Cron-Secret": secret},
+            )
+            if response.status_code != 409 or "already running" not in response.text:
+                break
+            print(f"  sync lock held, retrying in 60s (attempt {attempt})")
+            await asyncio.sleep(60)
 
     if response.status_code != 200:
         print(f"Failed: HTTP {response.status_code} {response.text}", file=sys.stderr)

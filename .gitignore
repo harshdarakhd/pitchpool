@@ -13,5 +13,6 @@ venv/
 dist/
 node_modules/
 .ch_page.html
+.cron_secret.local
 playwright-report/
 .pytest_cache/
