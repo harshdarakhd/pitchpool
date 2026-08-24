@@ -234,6 +234,72 @@ class TestCronImport:
             app.dependency_overrides.clear()
 
     @pytest.mark.asyncio
+    async def test_upcoming_import_creates_quizzes(self, client: AsyncClient, db_session):
+        from sqlalchemy import select
+
+        from app.db.base import get_db
+        from app.db.models import Match, QuizQuestion
+        from app.main import app
+
+        async def _override():
+            yield db_session
+
+        app.dependency_overrides[get_db] = _override
+        try:
+            resp = await client.post(
+                "/internal/cron/import",
+                headers={"X-Cron-Secret": get_settings().cron_secret},
+                json={
+                    "teams": ["Rajwada Royals", "Eagles Warriors"],
+                    "matches": [
+                        {
+                            "cricheroes_match_key": "upc-1",
+                            "team_a_name": "Rajwada Royals",
+                            "team_b_name": "Eagles Warriors",
+                            "start_time": "2099-07-13T08:00:00+00:00",
+                            "status": "upcoming",
+                        }
+                    ],
+                },
+            )
+            assert resp.status_code == 200
+            match = (
+                await db_session.execute(select(Match).where(Match.cricheroes_match_key == "upc-1"))
+            ).scalar_one()
+            kinds = {
+                q.kind
+                for q in (
+                    await db_session.execute(
+                        select(QuizQuestion).where(QuizQuestion.match_id == match.id)
+                    )
+                )
+                .scalars()
+                .all()
+            }
+            assert kinds == {"winner", "completed"}
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_pending_sync_flag(self, client: AsyncClient):
+        from app.core.redis import flag_sync_requested, reset_redis_client
+
+        secret = {"X-Cron-Secret": get_settings().cron_secret}
+        empty = await client.get("/internal/cron/pending-sync", headers=secret)
+        assert empty.status_code == 200
+        assert empty.json()["pending"] is False
+
+        await flag_sync_requested()
+        flagged = await client.get("/internal/cron/pending-sync", headers=secret)
+        assert flagged.json()["pending"] is True
+
+        ack = await client.post("/internal/cron/ack-sync", headers=secret)
+        assert ack.status_code == 200
+        cleared = await client.get("/internal/cron/pending-sync", headers=secret)
+        assert cleared.json()["pending"] is False
+        reset_redis_client()
+
+    @pytest.mark.asyncio
     async def test_rejects_mismatched_tournament(self, client: AsyncClient, db_session):
         from app.db.base import get_db
         from app.main import app

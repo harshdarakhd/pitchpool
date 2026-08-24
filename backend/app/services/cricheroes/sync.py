@@ -11,6 +11,7 @@ from app.core.config import get_settings
 from app.db.models import Match, MatchPool, MatchStage, MatchStatus, SyncRun, Team, Tournament
 from app.services.cricheroes.client import fetch_all_match_tabs
 from app.services.cricheroes.parser import parse_matches_from_pages, parse_teams_from_html
+from app.services.quizzes import ensure_match_quizzes
 from app.services.settlement import settle_match
 from app.services.tournaments import ensure_active_tournament, update_tournament_counts
 
@@ -148,6 +149,8 @@ async def _apply_matches(
                 and winner_id
             ):
                 await settle_match(db, match)
+            elif status in (MatchStatus.upcoming, MatchStatus.locked):
+                await ensure_match_quizzes(db, match, team_a, team_b)
             updated += 1
         else:
             match = Match(
@@ -173,6 +176,7 @@ async def _apply_matches(
             await db.flush()
             db.add(MatchPool(match_id=match.id, team_id=team_a.id))
             db.add(MatchPool(match_id=match.id, team_id=team_b.id))
+            await ensure_match_quizzes(db, match, team_a, team_b)
             updated += 1
 
     run.matches_updated = updated

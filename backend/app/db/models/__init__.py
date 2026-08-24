@@ -199,6 +199,7 @@ class QuizQuestion(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     match_id: Mapped[int] = mapped_column(ForeignKey("matches.id"), index=True)
+    kind: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     text: Mapped[str] = mapped_column(Text)
     options: Mapped[dict] = mapped_column(JSON)
     correct_option: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)

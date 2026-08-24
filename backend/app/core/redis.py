@@ -129,3 +129,20 @@ async def acquire_lock(key: str, ttl: int = 120) -> bool:
 async def release_lock(key: str) -> None:
     r = await get_redis()
     await r.delete(key)
+
+
+SYNC_REQUEST_KEY = "sync:requested"
+
+
+async def flag_sync_requested(ttl: int = 1800) -> None:
+    """Phone/admin ping: the home agent should scrape as soon as it can."""
+    await cache_set(SYNC_REQUEST_KEY, "1", ttl=ttl)
+
+
+async def sync_is_requested() -> bool:
+    return await cache_get(SYNC_REQUEST_KEY) is not None
+
+
+async def clear_sync_request() -> None:
+    r = await get_redis()
+    await r.delete(SYNC_REQUEST_KEY)

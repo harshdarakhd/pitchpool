@@ -206,4 +206,6 @@ export const api = {
   adminSyncRuns: () => request<SyncRun[]>('/api/v1/admin/sync/runs'),
   adminTriggerSync: () =>
     request<SyncRun>('/api/v1/admin/sync', { method: 'POST' }),
+  adminRequestSync: () =>
+    request<{ ok: boolean; message: string }>('/api/v1/admin/sync/request', { method: 'POST' }),
 };

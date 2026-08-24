@@ -14,5 +14,7 @@ dist/
 node_modules/
 .ch_page.html
 .cron_secret.local
+.env.agent
+sync_agent.log
 playwright-report/
 .pytest_cache/

@@ -5,7 +5,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.deps import get_current_admin, get_current_user
 from app.core.rate_limit import limiter
-from app.core.redis import acquire_lock, release_lock
+from app.core.redis import acquire_lock, flag_sync_requested, release_lock
 from app.db.base import get_db
 from app.db.models import Match, MatchStatus, SyncRun, Tournament, User
 from app.schemas import (
@@ -156,6 +156,16 @@ async def trigger_sync(
         return run
     finally:
         await release_lock(SYNC_LOCK_KEY)
+
+
+@router.post("/sync/request")
+async def request_home_sync(admin: User = Depends(get_current_admin)):
+    """Ask the home-PC agent to scrape CricHeroes. The Render host cannot."""
+    await flag_sync_requested()
+    return {
+        "ok": True,
+        "message": "Sync requested. Matches appear after your PC agent finishes scraping.",
+    }
 
 
 @router.get("/sync/runs", response_model=list[SyncRunResponse])

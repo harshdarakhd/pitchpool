@@ -15,6 +15,7 @@ from app.db.models import (
     TransactionType,
 )
 from app.services.ledger import apply_transaction
+from app.services.quizzes import resolve_auto_quiz_answers
 from app.services.scoring import ensure_badges_seeded, settle_match_payouts
 
 
@@ -72,6 +73,8 @@ async def settle_match(db: AsyncSession, match: Match) -> dict:
 
     if match.status == MatchStatus.no_result:
         await refund_match(db, match)
+        await resolve_auto_quiz_answers(db, match)
+        await score_quizzes(db, match)
         match.settled_at = datetime.now(UTC)
         await db.flush()
         return {"status": "refunded"}
@@ -80,6 +83,7 @@ async def settle_match(db: AsyncSession, match: Match) -> dict:
         return {"status": "no_winner"}
 
     summary = await settle_match_payouts(db, match, match.winner_team_id)
+    await resolve_auto_quiz_answers(db, match)
     await score_quizzes(db, match)
     match.settled_at = datetime.now(UTC)
     match.status = MatchStatus.completed

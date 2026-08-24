@@ -152,6 +152,8 @@ export default function Admin() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [openBidCount, setOpenBidCount] = useState<number | null>(null);
 
+  const [requestMessage, setRequestMessage] = useState<string | null>(null);
+
   const currentQuery = useQuery({
     queryKey: ['admin', 'current-tournament'],
     queryFn: api.adminCurrentTournament,
@@ -166,6 +168,7 @@ export default function Admin() {
     queryKey: ['admin', 'sync-runs'],
     queryFn: api.adminSyncRuns,
     refetchInterval: (query) => {
+      if (requestMessage) return 5000;
       const runs = query.state.data;
       return runs?.some((r) => r.status === 'running') ? 3000 : false;
     },
@@ -209,6 +212,19 @@ export default function Admin() {
     mutationFn: api.adminTriggerSync,
     onMutate: () => setSyncError(null),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['admin'] }),
+    onError: (err: ApiError) => setSyncError(err.message),
+  });
+
+  const requestSyncMutation = useMutation({
+    mutationFn: api.adminRequestSync,
+    onMutate: () => {
+      setSyncError(null);
+      setRequestMessage(null);
+    },
+    onSuccess: (data) => {
+      setRequestMessage(data.message);
+      qc.invalidateQueries({ queryKey: ['admin'] });
+    },
     onError: (err: ApiError) => setSyncError(err.message),
   });
 
@@ -320,23 +336,40 @@ export default function Admin() {
       </section>
 
       <section className="card p-4 sm:p-6 space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
           <div>
-            <h2 className="font-display font-semibold">Manual sync</h2>
+            <h2 className="font-display font-semibold">Sync fixtures</h2>
             <p className="text-muted text-sm mt-1">
-              Pull the latest fixtures and results from CricHeroes for the active tournament.
+              CricHeroes blocks the cloud server. Leave the home-PC agent running (see
+              scripts/install_sync_agent.ps1). Tap the button below from your phone and the PC
+              scrapes, then upcoming matches and quizzes appear for everyone.
             </p>
           </div>
-          <button
-            type="button"
-            className="btn-primary touch-target shrink-0"
-            onClick={() => syncMutation.mutate()}
-            disabled={syncMutation.isPending || !current}
-          >
-            {syncMutation.isPending ? 'Syncing…' : 'Run sync'}
-          </button>
+          <div className="flex flex-col sm:flex-row gap-2 shrink-0">
+            <button
+              type="button"
+              className="btn-primary touch-target"
+              onClick={() => requestSyncMutation.mutate()}
+              disabled={requestSyncMutation.isPending || !current}
+            >
+              {requestSyncMutation.isPending ? 'Requesting…' : 'Sync from my PC'}
+            </button>
+            <button
+              type="button"
+              className="btn-ghost touch-target"
+              onClick={() => syncMutation.mutate()}
+              disabled={syncMutation.isPending || !current}
+            >
+              {syncMutation.isPending ? 'Scraping…' : 'Try server scrape'}
+            </button>
+          </div>
         </div>
         {!current && <p className="text-muted text-sm">Activate a tournament before syncing.</p>}
+        {requestMessage && (
+          <p className="text-sm text-positive" role="status">
+            {requestMessage}
+          </p>
+        )}
         {syncError && (
           <p
             className={`text-sm ${syncMutation.error instanceof ApiError && syncMutation.error.status === 409 ? 'text-accent' : 'text-negative'}`}

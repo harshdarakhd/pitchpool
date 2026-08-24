@@ -1,18 +1,20 @@
-"""Scrape CricHeroes locally and push the fixtures to the deployed site.
+"""Scrape CricHeroes locally and push fixtures to the deployed site.
 
-CricHeroes serves a Cloudflare "Just a moment..." challenge to datacenter IPs,
-so Render cannot scrape itself. Run this from a normal home/office connection.
+CricHeroes serves a Cloudflare challenge to datacenter IPs, so Render cannot
+scrape itself. Run this from a home/office connection.
 
-Usage:
-    set PITCHPOOL_URL=https://pitchpool.onrender.com
-    set PITCHPOOL_CRON_SECRET=<CRON_SECRET from Render>
-    python scripts/push_sync.py
+  python scripts/push_sync.py
+  python scripts/push_sync.py --loop --interval 600
 
-    python scripts/push_sync.py --ref 2078243 --dry-run
+`--loop` keeps watching: it syncs on a timer and immediately when you tap
+**Sync from my PC** on the phone Admin page.
 """
+
+from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -33,25 +35,23 @@ from app.services.cricheroes.parser import (  # noqa: E402
 from app.services.tournaments import parse_tournament_ref  # noqa: E402
 
 
-async def main() -> int:
-    settings = get_settings()
-    parser = argparse.ArgumentParser(description="Push locally scraped fixtures to production.")
-    parser.add_argument(
-        "--ref",
-        default=settings.cricheroes_base_url or str(settings.cricheroes_tournament_id),
-        help="CricHeroes tournament URL or numeric ID",
+def _headers(secret: str) -> dict[str, str]:
+    return {"X-Cron-Secret": secret}
+
+
+async def pending_requested(client: httpx.AsyncClient, target: str, secret: str) -> bool:
+    response = await client.get(
+        f"{target}/internal/cron/pending-sync",
+        headers=_headers(secret),
+        timeout=30,
     )
-    parser.add_argument("--url", default="", help="deployed base URL (or PITCHPOOL_URL)")
-    parser.add_argument("--secret", default="", help="CRON_SECRET (or PITCHPOOL_CRON_SECRET)")
-    parser.add_argument("--dry-run", action="store_true", help="scrape and report, send nothing")
-    args = parser.parse_args()
+    if response.status_code != 200:
+        return False
+    return bool(response.json().get("pending"))
 
-    import os
 
-    target = (args.url or os.environ.get("PITCHPOOL_URL", "")).rstrip("/")
-    secret = args.secret or os.environ.get("PITCHPOOL_CRON_SECRET", "")
-
-    cricheroes_id, _slug, base_url = parse_tournament_ref(args.ref)
+async def scrape_and_push(*, ref: str, target: str, secret: str, dry_run: bool) -> int:
+    cricheroes_id, _slug, base_url = parse_tournament_ref(ref)
     print(f"Scraping {base_url}")
 
     pages = await fetch_all_match_tabs(base_url)
@@ -90,7 +90,7 @@ async def main() -> int:
         ],
     }
 
-    if args.dry_run:
+    if dry_run:
         print("Dry run — not sending.")
         return 0
 
@@ -100,13 +100,11 @@ async def main() -> int:
 
     print(f"Pushing to {target}/internal/cron/import")
     async with httpx.AsyncClient(timeout=180) as client:
-        # A crashed server-side scrape can leave the shared lock set until its
-        # 15-minute TTL expires; wait it out rather than scraping again.
         for attempt in range(1, 20):
             response = await client.post(
                 f"{target}/internal/cron/import",
                 json=payload,
-                headers={"X-Cron-Secret": secret},
+                headers=_headers(secret),
             )
             if response.status_code != 409 or "already running" not in response.text:
                 break
@@ -126,6 +124,63 @@ async def main() -> int:
         print(f"  error: {run['error']}", file=sys.stderr)
         return 1
     return 0
+
+
+async def run_loop(*, ref: str, target: str, secret: str, interval: int) -> int:
+    if not target or not secret:
+        print("Set PITCHPOOL_URL and PITCHPOOL_CRON_SECRET (or --url/--secret).", file=sys.stderr)
+        return 1
+
+    print(f"Agent running. Timer every {interval}s; phone Admin tap syncs immediately.")
+    await scrape_and_push(ref=ref, target=target, secret=secret, dry_run=False)
+    elapsed = 0
+    poll = 30
+    async with httpx.AsyncClient(timeout=30) as client:
+        while True:
+            await asyncio.sleep(poll)
+            elapsed += poll
+            try:
+                requested = await pending_requested(client, target, secret)
+            except Exception as exc:
+                print(f"  pending-sync check failed: {exc}", file=sys.stderr)
+                requested = False
+            if requested or elapsed >= interval:
+                reason = "phone request" if requested else "timer"
+                print(f"Starting sync ({reason})")
+                await scrape_and_push(ref=ref, target=target, secret=secret, dry_run=False)
+                elapsed = 0
+
+
+async def main() -> int:
+    settings = get_settings()
+    parser = argparse.ArgumentParser(description="Push locally scraped fixtures to production.")
+    parser.add_argument(
+        "--ref",
+        default=settings.cricheroes_base_url or str(settings.cricheroes_tournament_id),
+        help="CricHeroes tournament URL or numeric ID",
+    )
+    parser.add_argument("--url", default="", help="deployed base URL (or PITCHPOOL_URL)")
+    parser.add_argument("--secret", default="", help="CRON_SECRET (or PITCHPOOL_CRON_SECRET)")
+    parser.add_argument("--dry-run", action="store_true", help="scrape and report, send nothing")
+    parser.add_argument(
+        "--loop",
+        action="store_true",
+        help="stay running: timer plus phone Admin 'Sync from my PC'",
+    )
+    parser.add_argument(
+        "--interval",
+        type=int,
+        default=600,
+        help="seconds between automatic syncs in --loop (default 600)",
+    )
+    args = parser.parse_args()
+
+    target = (args.url or os.environ.get("PITCHPOOL_URL", "")).rstrip("/")
+    secret = args.secret or os.environ.get("PITCHPOOL_CRON_SECRET", "")
+
+    if args.loop:
+        return await run_loop(ref=args.ref, target=target, secret=secret, interval=max(60, args.interval))
+    return await scrape_and_push(ref=args.ref, target=target, secret=secret, dry_run=args.dry_run)
 
 
 if __name__ == "__main__":

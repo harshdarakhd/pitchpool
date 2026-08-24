@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.db.base import AsyncSessionLocal, engine
-from app.db.models import Base, Match, MatchStatus, QuizQuestion, Team
+from app.db.models import Base, Match, MatchStatus, Team
 from app.services.cricheroes.sync import sync_cricheroes
 from app.services.scoring import ensure_badges_seeded
 
@@ -49,26 +49,18 @@ async def seed(sync: bool = True) -> None:
 
 
 async def _seed_quiz(db) -> None:
-    """Attach a starter quiz question to any match that has none."""
+    """Attach the reusable quiz pack to any upcoming match that has none."""
+    from sqlalchemy.orm import selectinload
+
+    from app.services.quizzes import ensure_match_quizzes
+
     open_matches = await db.execute(
-        select(Match).where(Match.status.in_([MatchStatus.upcoming, MatchStatus.locked]))
+        select(Match)
+        .where(Match.status.in_([MatchStatus.upcoming, MatchStatus.locked]))
+        .options(selectinload(Match.team_a), selectinload(Match.team_b))
     )
     for match in open_matches.scalars().all():
-        existing = await db.execute(
-            select(QuizQuestion).where(QuizQuestion.match_id == match.id)
-        )
-        if existing.scalars().first():
-            continue
-        db.add(
-            QuizQuestion(
-                match_id=match.id,
-                text="Will any batter score 30+ runs without hitting a six?",
-                options={"A": "Yes", "B": "No", "C": "Maybe", "D": "N/A"},
-                correct_option=None,
-                points=100,
-                locks_at=match.bid_deadline,
-            )
-        )
+        await ensure_match_quizzes(db, match, match.team_a, match.team_b)
 
 
 if __name__ == "__main__":

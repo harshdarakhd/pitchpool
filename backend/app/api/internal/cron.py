@@ -6,7 +6,12 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.core.redis import acquire_lock, release_lock
+from app.core.redis import (
+    acquire_lock,
+    clear_sync_request,
+    release_lock,
+    sync_is_requested,
+)
 from app.db.base import get_db
 from app.schemas import ImportRequest, SyncRunResponse
 from app.services.cricheroes.sync import import_matches, sync_cricheroes
@@ -84,3 +89,21 @@ async def cron_import(
         )
     finally:
         await release_lock(SYNC_LOCK_KEY)
+        await clear_sync_request()
+
+
+@router.get("/pending-sync")
+async def cron_pending_sync(
+    x_cron_secret: str | None = Header(default=None, alias="X-Cron-Secret"),
+):
+    _verify_cron_secret(x_cron_secret)
+    return {"pending": await sync_is_requested()}
+
+
+@router.post("/ack-sync")
+async def cron_ack_sync(
+    x_cron_secret: str | None = Header(default=None, alias="X-Cron-Secret"),
+):
+    _verify_cron_secret(x_cron_secret)
+    await clear_sync_request()
+    return {"ok": True}

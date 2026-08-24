@@ -131,11 +131,21 @@ Render to stop the pointless retries; deadline sweeps keep running.
 
 Push fixtures from a normal home connection instead:
 
-```bash
-set PITCHPOOL_URL=https://<your-service>
-set PITCHPOOL_CRON_SECRET=<CRON_SECRET from Render>
+```powershell
+# One-shot
+$env:PITCHPOOL_URL="https://<your-service>"
+$env:PITCHPOOL_CRON_SECRET="<CRON_SECRET from Render>"
 python scripts/push_sync.py
+
+# Always-on agent (syncs every 10 minutes AND when you tap Admin on your phone)
+.\scripts\install_sync_agent.ps1
 ```
+
+Leave that PC signed in. From your phone, open **Admin → Sync from my PC**. The agent
+scrapes CricHeroes on the PC (Cloudflare allows home/mobile-residential IPs) and
+pushes fixtures to Render. Upcoming matches get a reusable quiz pack automatically
+(winner + completed/abandoned). Quizzes lock at the bid deadline and score themselves
+when the result arrives.
 
 The script scrapes locally, then POSTs to the protected endpoint:
 
